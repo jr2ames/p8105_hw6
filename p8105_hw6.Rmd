@@ -98,6 +98,7 @@ Normality assumption holds. There are a few influential-looking points, but none
 Now we compare the models in terms of their average root mean square error (RMSE) on 100 random 80-20 splits of the data (80% training, 20% testing).
 
 ```{r crossvalidate}
+library(modelr)
 set.seed(15)
 cv_df <- crossv_mc(bw, 100)
     
@@ -174,7 +175,17 @@ munchausen %>%
   ggplot(aes(x = log_prod)) + geom_density() +
   labs(x = "log(b_0 * b_1)", title = "Distribution of estimated log(b_0 * b_1)")
 
-#Confidence interval
+#Confidence interval - r-squared
+lower <- munchausen %>% pull(r.squared) %>% quantile(0.025)
+upper <- munchausen %>% pull(r.squared) %>% quantile(0.975)
+c(lower, upper)
 
+
+#Confidence interval - log(B_0 * B_1)
+lower2 <- munchausen %>% pull(log_prod) %>% quantile(0.025)
+upper2 <- munchausen %>% pull(log_prod) %>% quantile(0.975)
+c(lower2, upper2)
 ```
+
+The distributions of our bootstrap estimates for $\hat{r}^2$ and $\log(\hat{\beta_0}*\hat{\beta_1})$ are each roughly bell-shaped and unimodal, with a slightly steeper bell shape than a normal distribution. The distribution of $\hat{r}^2$ is centered at `r round(munchausen %>% pull(r.squared) %>% median(), 3)` and the distribution of $\log(\hat{\beta_0}*\hat{\beta_1})$ is centered at `r round(munchausen %>% pull(log_prod) %>% median(), 3)`.
 
