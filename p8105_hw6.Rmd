@@ -1,0 +1,132 @@
+---
+title: "P8105 Homework 6"
+author: "Jesse R. Ames"
+date: "12/4/2021"
+output: github_document
+---
+
+## Problem 1
+
+### Load and clean the data
+
+```{r loaddata}
+library(tidyverse)
+birthweight <- read_csv("data/birthweight.csv")
+skimr::skim(birthweight)
+```
+
+No missing data, but we might want to convert some `numeric` columns to `factor`
+
+```{r cleandata}
+bw <- birthweight %>%
+  mutate(
+    babysex = as.character(babysex),
+    babysex = fct_recode(babysex, Male = "1", Female = "2"),
+    
+    frace = as.character(frace),
+    frace = fct_recode(frace, White = "1", Black = "2", Asian = "3",
+                            "Puerto Rican" = "4", Other = "8", Unknown = "9"),
+    
+    mrace = as.character(mrace),
+    mrace = fct_recode(mrace, White = "1", Black = "2", Asian = "3",
+                            "Puerto Rican" = "4", Other = "8"),
+    
+    malform = as.logical(malform)
+  )
+```
+
+### Multiple linear regression
+
+We seem to have a lot of variables here, and a lot of possible interactions. We want to create a model that is both parsimonious and explanatorily powerful. Accordingly, I will choose my model using BIC, starting from the full model (all linear terms, no interactions) and working backward. I will then compare this model's predictive power against two suggested models:
+
+* Model A, with just length at birth and gestational age
+* Model B, with head circumference, length, sex, and all interactions between these three
+
+```{r regression}
+big_model <- lm(bwt~., data = bw)
+step_bic <- step(big_model, trace = 0, k = log(nobs(big_model)), direction = "backward")
+summary(step_bic)
+```
+
+This model includes the baby's sex, head circumference, and length, and the mother's weight at delivery, weight pre-pregnancy, height, race, and cigarette consumption during pregnancy. Do we violate any assumptions?
+
+```{r}
+library(patchwork)
+bw_fit <- bw %>%
+  modelr::add_residuals(step_bic) %>%
+  modelr::add_predictions(step_bic)
+
+pred_resid <- bw_fit %>%
+  ggplot(aes(x = pred, y = resid)) + geom_point() + labs(x = "Predicted value", y = "Residual")
+
+head_resid <- bw_fit %>%
+  ggplot(aes(x = bhead, y = resid)) + geom_point() + labs(x = "Baby's head circumference (cm)",
+                                                          y = "Residual")
+len_resid <- bw_fit %>%
+  ggplot(aes(x = blength, y = resid)) + geom_point() + labs(x = "Baby's length (cm)", y = "Residual")
+
+race_resid <- bw_fit %>%
+  ggplot(aes(x = mrace, y = resid)) + geom_violin() + labs(x = "Mother's race", y = "Residual")
+
+(pred_resid + head_resid)/(len_resid + race_resid)
+```
+
+It seems like we have a bit of curvature in our residuals. Try raising the power of `bhead` and `blength`
+
+```{r}
+fit2 <- lm(bwt ~ babysex + I(bhead^2) + I(blength^2) + delwt + gaweeks +
+             mheight + mrace + ppwt + smoken, data = bw)
+summary(fit2)
+bw_fit2 <- bw %>%
+  modelr::add_residuals(fit2) %>%
+  modelr::add_predictions(fit2)
+
+bw_fit2 %>%
+  ggplot(aes(x = pred, y = resid)) + geom_point() + labs(x = "Predicted value", y = "Residual")
+```
+
+Slightly better. Though we still have a bit of heteroscedasticity. What about normality? Leverage?
+
+```{r}
+(plot(fit2, which = 2) + plot(fit2, which = 5))
+```
+
+Normality assumption holds. There are a few influential-looking points, but none with a Cook's D of more than 0.5. I will use this as my model going forward. 
+
+### Cross-validation
+
+Now we compare the models in terms of their average root mean square error (RMSE) on 100 permutations of the data.
+
+```{r}
+set.seed(15)
+cv_df <- crossv_mc(bw, 100)
+    
+cv_df <- cv_df %>% 
+  mutate(
+    model_a  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    model_b  = map(train, ~lm(bwt ~ (bhead + blength + babysex)^2 + bhead*blength*babysex,
+                              data = .x )),
+    my_model = map(train, ~lm(bwt ~ babysex + I(bhead^2) + I(blength^2) + delwt + gaweeks +
+             mheight + mrace + ppwt + smoken, data = .x))) %>% 
+  mutate(
+    rmse_model_a = map2_dbl(model_a, test, ~rmse(model = .x, data = .y)),
+    rmse_model_b = map2_dbl(model_b, test, ~rmse(model = .x, data = .y)),
+    rmse_my_model = map2_dbl(my_model, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin() + labs(x = "Model", y = "RMSE")
+```
+
+It looks like my model performs the best on average of these three models, though Model B was relatively close.
+
+
+
+
+
