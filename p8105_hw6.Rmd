@@ -50,7 +50,7 @@ summary(step_bic)
 
 This model includes the baby's sex, head circumference, and length, and the mother's weight at delivery, weight pre-pregnancy, height, race, and cigarette consumption during pregnancy. Do we violate any assumptions?
 
-```{r}
+```{r diagplots}
 library(patchwork)
 bw_fit <- bw %>%
   modelr::add_residuals(step_bic) %>%
@@ -73,7 +73,7 @@ race_resid <- bw_fit %>%
 
 It seems like we have a bit of curvature in our residuals. Try raising the power of `bhead` and `blength`
 
-```{r}
+```{r diag1}
 fit2 <- lm(bwt ~ babysex + I(bhead^2) + I(blength^2) + delwt + gaweeks +
              mheight + mrace + ppwt + smoken, data = bw)
 summary(fit2)
@@ -85,9 +85,9 @@ bw_fit2 %>%
   ggplot(aes(x = pred, y = resid)) + geom_point() + labs(x = "Predicted value", y = "Residual")
 ```
 
-Slightly better. Though we still have a bit of heteroscedasticity. What about normality? Leverage?
+Slightly better. What about normality? Leverage?
 
-```{r}
+```{r diag2}
 (plot(fit2, which = 2) + plot(fit2, which = 5))
 ```
 
@@ -95,9 +95,9 @@ Normality assumption holds. There are a few influential-looking points, but none
 
 ### Cross-validation
 
-Now we compare the models in terms of their average root mean square error (RMSE) on 100 permutations of the data.
+Now we compare the models in terms of their average root mean square error (RMSE) on 100 random 80-20 splits of the data (80% training, 20% testing).
 
-```{r}
+```{r crossvalidate}
 set.seed(15)
 cv_df <- crossv_mc(bw, 100)
     
@@ -126,7 +126,55 @@ cv_df %>%
 
 It looks like my model performs the best on average of these three models, though Model B was relatively close.
 
+## Problem 2
 
+### Download the data
 
+```{r download}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
 
+### Boostrap estimates
+
+```{r}
+#Bootstrapping is named for the fictional Baron von Munchausen,
+#who pulled himself up by his bootstraps when his horse got stuck in the mud
+
+set.seed(15)
+munchausen <- weather_df %>%
+  modelr::bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy),
+    summary = map(models, broom::glance)) %>% 
+  select(-strap, -models) %>% 
+  unnest(results) %>%
+  pivot_wider(names_from = term, values_from = estimate:p.value) %>%
+  mutate(
+    log_prod = log(`estimate_(Intercept)` * estimate_tmin)
+  ) %>%
+  unnest(summary)
+  
+#Plot distributions
+munchausen %>%
+  ggplot(aes(x = r.squared)) + geom_density() +
+    labs(x = "Estimate r-squared", title = "Distribution of estimated r-squared")
+
+munchausen %>%
+  ggplot(aes(x = log_prod)) + geom_density() +
+  labs(x = "log(b_0 * b_1)", title = "Distribution of estimated log(b_0 * b_1)")
+
+#Confidence interval
+
+```
 
